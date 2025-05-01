@@ -7,6 +7,7 @@ return {
   default_opts = {
     throttle = 3,
     icon = wezterm.nerdfonts.oct_cpu,
+    use_pwsh = false,
   },
   update = function(_, opts)
     local current_time = os.time()
@@ -15,11 +16,30 @@ return {
     end
     local success, result
     if string.match(wezterm.target_triple, 'windows') ~= nil then
-      success, result = wezterm.run_child_process {
-        'cmd.exe',
-        '/C',
-        'wmic cpu get loadpercentage',
-      }
+      if opts.use_pwsh then
+        success, result, stderr = wezterm.run_child_process {
+          'powershell.exe',
+          '-Command',
+          'try { Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage } catch { $_.Exception.Message }',
+        }
+        wezterm.log_info('PowerShell CPU command success: ' .. tostring(success))
+        wezterm.log_info('PowerShell CPU command result: ' .. tostring(result))
+        wezterm.log_info('PowerShell CPU stderr: ' .. tostring(stderr))
+
+        -- 結果の詳細をダンプ
+        if result then
+          wezterm.log_info('Result length: ' .. tostring(#result))
+          wezterm.log_info('Result bytes: ' .. tostring(result:gsub('.', function(c)
+            return string.format('%02X ', string.byte(c))
+          end)))
+        end
+      else
+        success, result = wezterm.run_child_process {
+          'cmd.exe',
+          '/C',
+          'wmic cpu get loadpercentage',
+        }
+      end
     elseif string.match(wezterm.target_triple, 'linux') ~= nil then
       success, result = wezterm.run_child_process {
         'bash',
@@ -40,7 +60,11 @@ return {
 
     local cpu
     if string.match(wezterm.target_triple, 'windows') ~= nil then
-      cpu = result:match('%d+')
+      if opts.use_pwsh then
+        cpu = tonumber(result:match('%d+%.?%d*') or '0')
+      else
+        cpu = result:match('%d+')
+      end
     else
       cpu = result:gsub('^%s*(.-)%s*$', '%1')
     end

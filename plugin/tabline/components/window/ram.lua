@@ -7,6 +7,7 @@ return {
   default_opts = {
     throttle = 3,
     icon = wezterm.nerdfonts.cod_server,
+    use_pwsh = false,
   },
   update = function(_, opts)
     local current_time = os.time()
@@ -15,11 +16,30 @@ return {
     end
     local success, result
     if string.match(wezterm.target_triple, 'windows') ~= nil then
-      success, result = wezterm.run_child_process {
-        'cmd.exe',
-        '/C',
-        'wmic OS get FreePhysicalMemory',
-      }
+      if opts.use_pwsh then
+        success, result, stderr = wezterm.run_child_process {
+          'powershell.exe',
+          '-Command',
+          'try { Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty FreePhysicalMemory } catch { $_.Exception.Message }',
+        }
+        wezterm.log_info('PowerShell RAM command success: ' .. tostring(success))
+        wezterm.log_info('PowerShell RAM command result: ' .. tostring(result))
+        wezterm.log_info('PowerShell RAM stderr: ' .. tostring(stderr))
+
+        -- 結果の詳細をダンプ
+        if result then
+          wezterm.log_info('Result length: ' .. tostring(#result))
+          wezterm.log_info('Result bytes: ' .. tostring(result:gsub('.', function(c)
+            return string.format('%02X ', string.byte(c))
+          end)))
+        end
+      else
+        success, result = wezterm.run_child_process {
+          'cmd.exe',
+          '/C',
+          'wmic OS get FreePhysicalMemory',
+        }
+      end
     elseif string.match(wezterm.target_triple, 'linux') ~= nil then
       success, result = wezterm.run_child_process { 'bash', '-c', 'free -m | awk \'NR==2{printf "%.2f", $3/1000 }\'' }
     elseif string.match(wezterm.target_triple, 'darwin') ~= nil then
@@ -40,15 +60,16 @@ return {
       local app_memory = anonymous_pages - pages_purgeable
       local wired_memory = result:match('Pages wired down: +(%d+).')
       local compressed_memory = result:match('Pages occupied by compressor: +(%d+).')
-      local used_memory = (app_memory + wired_memory + compressed_memory)
-        * page_size
-        / 1024
-        / 1024
-        / 1024
+      local used_memory = (app_memory + wired_memory + compressed_memory) * page_size / 1024 / 1024 / 1024
       ram = string.format('%.2f GB', used_memory)
     elseif string.match(wezterm.target_triple, 'windows') ~= nil then
-      ram = result:match('%d+')
-      ram = string.format('%.2f GB', tonumber(ram) / 1024 / 1024)
+      if opts.use_pwsh then
+        ram = tonumber(result:match('%d+%.?%d*') or '0')
+        ram = string.format('%.2f GB', ram / 1024 / 1024)
+      else
+        ram = result:match('%d+')
+        ram = string.format('%.2f GB', tonumber(ram) / 1024 / 1024)
+      end
     end
 
     last_update_time = current_time
